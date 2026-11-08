@@ -39,22 +39,25 @@ import { LogLineViewer } from "./log-line-viewer";
 import {
   Activity, Loader2, Play, Square, RotateCcw, FileText, ArrowLeft, Pencil,
   Search, Pin, PinOff, Filter, X, Terminal, Eye, EyeOff, RefreshCw, Check, Wrench, Copy,
-  Plus, Timer, Minus, Sparkles, FolderOpen, ChevronDown, FilePlus2,
+  Plus, Timer, Minus, Sparkles, FolderOpen, ChevronDown, FilePlus2, Trash2,
 } from "lucide-react";
 
 function useServiceAction(connectionId: string, serviceName: string) {
   const [acting, setActing] = useState(false);
+  const queryClient = useQueryClient();
   const handleAction = useCallback(async (action: "start" | "stop" | "restart") => {
     setActing(true);
     try {
       await servicesApi.act(connectionId, serviceName, action);
       toast.success(`${action} ${serviceName}`);
+      queryClient.invalidateQueries({ queryKey: ["services", connectionId] });
+      queryClient.invalidateQueries({ queryKey: ["service", connectionId, serviceName] });
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
       setActing(false);
     }
-  }, [connectionId, serviceName]);
+  }, [connectionId, serviceName, queryClient]);
   return { acting, handleAction };
 }
 
@@ -360,7 +363,9 @@ export function ServicesPanel({ onBack }: { onBack?: () => void }) {
     } else {
       toast.warning(`${okCount} succeeded, ${failCount} failed`);
     }
-  }, [connectionId, selectedNames]);
+    setSelectedNames(new Set());
+    queryClient.invalidateQueries({ queryKey: ["services", connectionId] });
+  }, [connectionId, selectedNames, queryClient]);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["services", connectionId],
@@ -632,6 +637,8 @@ function ServiceDetailView({
   const watched = isWatched(connectionId, serviceName);
   const [showLiveLogs, setShowLiveLogs] = useState(false);
   const [profileBusy, setProfileBusy] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const queryClient = useQueryClient();
 
   // Detail poll: systemctl show only — no systemctl cat / journalctl
   const { data: detail, isLoading, isError, error } = useQuery({
@@ -651,6 +658,23 @@ function ServiceDetailView({
   });
   const fileContent = fileData?.fileContent ?? "";
   const unitPaths = useMemo(() => parseUnitPaths(fileContent), [fileContent]);
+
+  const handleDelete = useCallback(async () => {
+    const ok = window.confirm(`Delete service "${serviceName}"? This will stop, disable, and remove the unit file.`);
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await servicesApi.delete(connectionId, serviceName);
+      toast.success(`Deleted ${serviceName}`);
+      removeWatched(connectionId, serviceName);
+      await queryClient.invalidateQueries({ queryKey: ["services", connectionId] });
+      onBack();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setDeleting(false);
+    }
+  }, [connectionId, serviceName, onBack, queryClient, removeWatched]);
 
   const [logQuery, setLogQuery] = useState("");
   const [logResults, setLogResults] = useState<LogSearchResult | null>(null);
@@ -951,6 +975,18 @@ function ServiceDetailView({
                     <span>Diagnose</span>
                   </Button>
                 )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-[10px] gap-1 px-2 text-destructive hover:text-destructive"
+                  onClick={handleDelete}
+                  disabled={deleting || acting}
+                  title="Delete service file"
+                  aria-label={`Delete ${serviceName}`}
+                >
+                  {deleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                  <span>Delete</span>
+                </Button>
               </>
             )}
 
@@ -980,10 +1016,10 @@ function ServiceDetailView({
           </div>
         )}
 
-        {/* Timestamp badges when log results are showing */}
-        {logResults && (logResults.startTimestamp || logResults.endTimestamp) && (
+        {/* Timestamp + session badges when log results are showing */}
+        {logResults && (logResults.startTimestamp || logResults.endTimestamp || logResults.sessionId) && (
           <div className="flex flex-col gap-1 px-2 pb-1.5">
-            <div className="flex items-center gap-1 text-[9px]">
+            <div className="flex items-center gap-1 flex-wrap text-[9px]">
               {logResults.startTimestamp && (
                 <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 font-mono text-green-500 border-green-500/30 shrink-0">
                   {logResults.startTimestamp}
@@ -996,6 +1032,24 @@ function ServiceDetailView({
                 <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 font-mono text-blue-500 border-blue-500/30 shrink-0">
                   {logResults.endTimestamp}
                 </Badge>
+              )}
+              {logResults.sessionId && (
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(logResults.sessionId!);
+                    toast.success("Session ID copied");
+                  }}
+                  title="Copy session_id (room_id)"
+                  className="min-w-0"
+                >
+                  <Badge
+                    variant="outline"
+                    className="text-[9px] px-1 py-0 h-4 font-mono text-amber-600 dark:text-amber-300 border-amber-500/30 bg-amber-500/[0.06] cursor-pointer hover:bg-amber-500/[0.15] transition-colors inline-flex items-center gap-1 max-w-[200px]"
+                  >
+                    <Copy className="h-2 w-2 shrink-0" />
+                    <span className="truncate">Session: {logResults.sessionId}</span>
+                  </Badge>
+                </button>
               )}
             </div>
             {logParsed.tools.size > 0 && (

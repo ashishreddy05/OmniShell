@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, memo } from "react";
 import ReactMarkdown from "react-markdown";
 import {
   Check, Copy, ChevronDown, ChevronRight, Eye, EyeOff, Terminal as TerminalIcon,
@@ -361,7 +361,7 @@ const MARKDOWN_COMPONENTS: any = {
 
 // ─── Main Structured Renderer ────────────────────────────────────────────
 
-export function StructuredMessage({
+function StructuredMessageBase({
   content,
   streaming,
 }: {
@@ -423,3 +423,5 @@ export function StructuredMessage({
     </div>
   );
 }
+
+export const StructuredMessage = memo(StructuredMessageBase);

@@ -45,7 +45,7 @@ export default function HomePage() {
 
   const active = activeTabId ? activeConnections.get(activeTabId) : null;
   const isConnected = active?.status === "connected";
-  const hasEditorTabs = editorTabs.length > 0;
+  const hasEditorTabs = editorTabs.some((t) => t.connectionId === activeTabId);
 
   // When editor tabs change, reset ratio if there were none
   const hadEditorTabs = useRef(hasEditorTabs);

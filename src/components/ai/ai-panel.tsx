@@ -844,7 +844,7 @@ Rules:
               );
             } else {
               appendToLast(
-                `\n\n_🔍 \`search_service_logs\` \`${serviceName}\` / \`${query}\` ok (${n} lines, \`${data.startTimestamp}\` → \`${data.endTimestamp}\`)_`,
+                `\n\n_🔍 \`search_service_logs\` \`${serviceName}\` / \`${query}\` ok (${n} lines, \`${data.startTimestamp}\` → \`${data.endTimestamp}\`${data.sessionId ? `, session \`${data.sessionId}\`` : ""})_`,
               );
             }
             functionResult = formatSearchServiceLogsResult({
@@ -852,6 +852,7 @@ Rules:
               query,
               start: data.startTimestamp,
               end: data.endTimestamp,
+              session: data.sessionId,
               body,
             });
           } else {
@@ -1024,6 +1025,7 @@ Rules:
           : "w-[500px] max-w-[90vw]",
         "bg-background border-l border-border shadow-2xl",
         "animate-in slide-in-from-right duration-300 ease-out",
+        "overflow-hidden",
       )}
     >
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0 bg-gradient-to-r from-muted/30 to-transparent">
@@ -1249,7 +1251,7 @@ Rules:
         </div>
       )}
 
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 space-y-4">
         {messages.length === 0 && !streaming && (
           <div className="flex flex-col items-center justify-center h-full text-center px-4 gap-4">
             <div className="relative animate-float">

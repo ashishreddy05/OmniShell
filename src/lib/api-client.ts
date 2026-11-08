@@ -10,6 +10,8 @@ export interface LogSearchResult {
   context: string;
   startTimestamp: string;
   endTimestamp: string;
+  /** Voice-agent session id, logged as `room_id` by the agent. */
+  sessionId?: string;
 }
 
 let channelSaturationTimer = 0;
@@ -204,18 +206,27 @@ export const servicesApi = {
     fetchJSON<{ fileContent: string }>(`/fs/${connectionId}/services/${encodeURIComponent(name)}?file=1`),
 
   memory: (connectionId: string, name: string) =>
-    fetchJSON<{ memoryMB: number | null }>(`/fs/${connectionId}/services/${encodeURIComponent(name)}/memory`),
+    fetchJSON<{ memoryMB: number | null }>(`/fs/${connectionId}/services`, {
+      method: "POST",
+      body: JSON.stringify({ action: "memory", service: name }),
+    }),
 
   act: (connectionId: string, name: string, action: "start" | "stop" | "restart" | "enable" | "disable") =>
-    fetchJSON<{ success: boolean }>(`/fs/${connectionId}/services/${encodeURIComponent(name)}`, {
+    fetchJSON<{ success: boolean }>(`/fs/${connectionId}/services`, {
       method: "POST",
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ action, service: name }),
+    }),
+
+  delete: (connectionId: string, name: string) =>
+    fetchJSON<{ success: boolean }>(`/fs/${connectionId}/services`, {
+      method: "POST",
+      body: JSON.stringify({ action: "delete", service: name }),
     }),
 
   runCommand: (connectionId: string, command: string) =>
-    fetchJSON<{ stdout: string; stderr: string }>(`/fs/${connectionId}/services/run`, {
+    fetchJSON<{ stdout: string; stderr: string }>(`/fs/${connectionId}/services`, {
       method: "POST",
-      body: JSON.stringify({ command }),
+      body: JSON.stringify({ action: "run-command", command }),
     }),
 
   daemonReload: (connectionId: string) =>
@@ -224,14 +235,11 @@ export const servicesApi = {
       body: JSON.stringify({ action: "daemon-reload" }),
     }),
 
-  logs: (connectionId: string, name: string, params: { search?: string; tail?: number; startPad?: number; endPad?: number }) => {
-    const query = new URLSearchParams();
-    if (params.search) query.set("search", params.search);
-    if (params.tail) query.set("tail", String(params.tail));
-    if (params.startPad) query.set("startPad", String(params.startPad));
-    if (params.endPad) query.set("endPad", String(params.endPad));
-    return fetchJSON<LogSearchResult | { logs: string }>(`/fs/${connectionId}/services/${encodeURIComponent(name)}/logs?${query}`);
-  },
+  logs: (connectionId: string, name: string, params: { search?: string; tail?: number; startPad?: number; endPad?: number }) =>
+    fetchJSON<LogSearchResult | { logs: string }>(`/fs/${connectionId}/services`, {
+      method: "POST",
+      body: JSON.stringify({ action: "logs", service: name, ...params }),
+    }),
 
   streamLogs: (
     connectionId: string,

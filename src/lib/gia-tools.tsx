@@ -60,7 +60,7 @@ export function highlightVoiceTools(text: string): ReactNode[] {
       return (
         <span
           key={i}
-          className="inline-flex items-center gap-1 px-1 py-0 rounded border border-violet-500/20 bg-violet-500/[0.08] text-[10px] font-mono text-violet-300 leading-none align-baseline"
+          className="inline-flex items-center gap-1 px-1 py-0 rounded border border-violet-500/20 bg-violet-500/[0.08] text-[10px] font-mono text-violet-700 dark:text-violet-300 leading-none align-baseline"
         >
           {part}
         </span>

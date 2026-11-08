@@ -289,6 +289,28 @@ export async function disableService(client: Client, serviceName: string): Promi
   if (stderr.trim()) throw new Error(stderr.trim());
 }
 
+/**
+ * Delete a service: stop → disable → daemon-reload → rm unit file.
+ * Single exec to minimize channel usage. Best-effort on each step —
+ * the unit may already be stopped or not exist on disk.
+ */
+export async function deleteService(client: Client, serviceName: string): Promise<void> {
+  const service = normalizeServiceName(serviceName);
+  const { stderr } = await execCommand(
+    client,
+    `systemctl stop "${service}.service" 2>/dev/null; ` +
+    `systemctl disable "${service}.service" 2>/dev/null; ` +
+    `systemctl daemon-reload 2>/dev/null; ` +
+    `rm -f "/etc/systemd/system/${service}.service"`,
+    30_000,
+  );
+  // Only throw on hard errors — "not loaded" / "no such unit" are expected
+  const hardErrors = (stderr || "").split("\n").filter(
+    (l) => l.trim() && !l.includes("not loaded") && !l.includes("No such file") && !l.includes("not-found"),
+  );
+  if (hardErrors.length > 0) throw new Error(hardErrors.join("\n"));
+}
+
 export async function runCommand(client: Client, command: string): Promise<{ stdout: string; stderr: string }> {
   return execCommand(
     client,
@@ -328,6 +350,29 @@ function unixTsFromShortUnixLine(line: string): string | null {
 }
 
 /**
+ * Extract the voice-agent session id from a log line. The app calls it
+ * `session_id`; the agent logs it as `room_id` (LiveKit room). Prefer room_id.
+ */
+const ROOM_ID_RE =
+  /["']?\broom[_-]?id\b["']?\s*[:=]\s*["']?([a-zA-Z0-9_.:-]{4,})/gi;
+const SESSION_KEY_ID_RE =
+  /["']?\bsession[_-]?id\b["']?\s*[:=]\s*["']?([a-zA-Z0-9_.:-]{4,})/gi;
+
+function firstSessionId(re: RegExp, text: string): string | undefined {
+  re.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    const value = match[1].replace(/[.:-]+$/, "");
+    if (value && !/^(null|none|undefined|nil)$/i.test(value)) return value;
+  }
+  return undefined;
+}
+
+export function extractSessionId(text: string): string | undefined {
+  return firstSessionId(ROOM_ID_RE, text) ?? firstSessionId(SESSION_KEY_ID_RE, text);
+}
+
+/**
  * Search logs by call_id (or any unique query).
  *
  * 1) `journalctl --grep=<call_id>` → lines for that call (start / customer / end webhooks, etc.)
@@ -341,7 +386,7 @@ export async function searchServiceLogs(
   serviceName: string,
   query: string,
   options: LogSearchOptions = {},
-): Promise<{ context: string; startTimestamp: string; endTimestamp: string }> {
+): Promise<{ context: string; startTimestamp: string; endTimestamp: string; sessionId?: string }> {
   const service = normalizeServiceName(serviceName);
   const startPad = Math.max(0, options.startPaddingSec ?? 0);
   const endPad = Math.max(0, options.endPaddingSec ?? 0);
@@ -402,7 +447,11 @@ export async function searchServiceLogs(
       ? contextLines[contextLines.length - 1].slice(0, 15).trim()
       : endTs || displayStart;
 
-  return { context: contextOutput, startTimestamp: displayStart, endTimestamp: displayEnd };
+  // Session id appears as room_id on the call's own log lines; fall back to
+  // the full window when the anchor lines don't carry it.
+  const sessionId = extractSessionId(contextOutput) ?? extractSessionId(matchRaw);
+
+  return { context: contextOutput, startTimestamp: displayStart, endTimestamp: displayEnd, sessionId };
 }
 
 export async function getServiceLogs(client: Client, serviceName: string, lines = 50): Promise<string> {
@@ -543,4 +592,35 @@ export async function getServicesStatus(
   return normalizedNames.map(name => {
     return statusMap.get(name) || { name, state: "unknown", substate: "unknown" };
   });
+}
+
+// Self-check: npx tsx server/ssh/services.ts
+const isDirectRun =
+  typeof process !== "undefined" &&
+  process.argv[1] &&
+  /services\.(ts|js|mjs)$/.test(process.argv[1]);
+
+if (isDirectRun) {
+  const assert = (cond: boolean, msg: string) => {
+    if (!cond) throw new Error(`services selfCheck failed: ${msg}`);
+  };
+  assert(
+    extractSessionId('Start webhook call_id=abc room_id=RM_abc123') === "RM_abc123",
+    "plain room_id",
+  );
+  assert(
+    extractSessionId('{"room_id":"RM_json","session_id":"s1"}') === "RM_json",
+    "json room_id preferred",
+  );
+  assert(
+    extractSessionId("session_id=abc-123 room baseline") === "abc-123",
+    "session_id fallback",
+  );
+  assert(extractSessionId('room_id="null"') === undefined, "null room_id");
+  assert(
+    extractSessionId("room_id=null later room_id=RM_real1") === "RM_real1",
+    "skips null room_id",
+  );
+  assert(extractSessionId("no identifiers here") === undefined, "no match");
+  console.log("services selfCheck ok");
 }

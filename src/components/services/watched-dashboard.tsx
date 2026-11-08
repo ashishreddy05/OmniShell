@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useWatchStore } from "@/stores/watch-store";
 import { servicesApi } from "@/lib/api-client";
 import { wsClient } from "@/lib/ws-client";
@@ -363,6 +363,7 @@ function SortableWatchedItem({
   const [acting, setActing] = useState(false);
   const [diagnosing, setDiagnosing] = useState(false);
   const [confirmAction, setConfirmAction] = useState<"start" | "stop" | "restart" | null>(null);
+  const queryClient = useQueryClient();
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -376,12 +377,14 @@ function SortableWatchedItem({
     try {
       await servicesApi.act(connectionId, serviceName, action);
       toast.success(`${action} ${serviceName}`);
+      queryClient.invalidateQueries({ queryKey: ["services", connectionId] });
+      queryClient.invalidateQueries({ queryKey: ["service", connectionId, serviceName] });
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
       setActing(false);
     }
-  }, [connectionId, serviceName]);
+  }, [connectionId, serviceName, queryClient]);
 
   const handleDiagnose = useCallback(async () => {
     setDiagnosing(true);

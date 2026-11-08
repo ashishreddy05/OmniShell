@@ -99,6 +99,7 @@ export function formatSearchServiceLogsResult(opts: {
   query: string;
   start?: string;
   end?: string;
+  session?: string;
   body: string;
 }): string {
   const body = (opts.body || "").trim();
@@ -118,6 +119,7 @@ export function formatSearchServiceLogsResult(opts: {
   return [
     `[search_service_logs] Service: ${opts.serviceName}`,
     `Query: ${opts.query}`,
+    opts.session ? `Session ID (room_id): ${opts.session}` : null,
     opts.start ? `Start: ${opts.start}` : null,
     opts.end ? `End: ${opts.end}` : null,
     `Line count: ${lines}`,
@@ -154,10 +156,12 @@ function selfCheck() {
     query: "call_xyz",
     start: "2026-01-01",
     end: "2026-01-02",
+    session: "RM_abc123",
     body,
   });
   assert(formatted.includes("Service Manager → Search logs"), "mentions Service Manager");
   assert(formatted.includes("GIA_BOOK_APPOINTMENT"), "formatted includes hit");
+  assert(formatted.includes("Session ID (room_id): RM_abc123"), "formatted includes session id");
   console.log("search-logs-diagnosis selfCheck ok");
 }
 

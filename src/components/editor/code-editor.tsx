@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { X, Save, Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FileDiff } from "@/components/diff/file-diff";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { editor } from "monaco-editor";
@@ -32,11 +33,19 @@ export function CodeEditor() {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
 
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
+  const [savedDiff, setSavedDiff] = useState<{ path: string; oldContent: string; newContent: string } | null>(null);
 
-  const activeEditorTab = activeTabId ? getTab(activeTabId) : null;
+  // Tabs are per connection: show only the active connection's tabs, and fall back to
+  // its last tab when the globally active tab belongs to another connection.
+  const connectionTabs = tabs.filter((t) => t.connectionId === activeConnection);
+  const activeEditorTab =
+    connectionTabs.find((t) => t.id === activeTabId) ??
+    connectionTabs[connectionTabs.length - 1] ??
+    null;
 
   const handleSave = useCallback(async () => {
     if (!activeEditorTab || !editorRef.current) return;
+    const previousContent = getOriginalContent(activeEditorTab.id) ?? "";
     const content = editorRef.current.getValue();
     try {
       await fsApi.write(activeEditorTab.connectionId, activeEditorTab.path, content);
@@ -56,6 +65,18 @@ export function CodeEditor() {
           },
         });
         setReturnView(null);
+      } else if (previousContent !== content) {
+        toast.success("Saved", {
+          duration: 8000,
+          action: {
+            label: "View diff",
+            onClick: () => setSavedDiff({
+              path: activeEditorTab.path,
+              oldContent: previousContent,
+              newContent: content,
+            }),
+          },
+        });
       } else {
         toast.success("Saved");
       }
@@ -124,12 +145,6 @@ export function CodeEditor() {
     }
   }, [activeEditorTab, setDirty]);
 
-  if (tabs.length === 0) {
-    return null;
-  }
-
-  // Only show tabs for the active connection
-  const connectionTabs = tabs.filter((t) => t.connectionId === activeConnection);
   if (connectionTabs.length === 0) return null;
 
   const pendingTab = pendingCloseTabId ? getTab(pendingCloseTabId) : null;
@@ -147,7 +162,7 @@ export function CodeEditor() {
             key={tab.id}
             className={cn(
               "group flex items-center gap-1.5 px-3 py-1.5 text-sm cursor-pointer border-r border-border min-w-0",
-              activeTabId === tab.id
+              activeEditorTab?.id === tab.id
                 ? "bg-background text-foreground"
                 : "text-muted-foreground hover:bg-background/50"
             )}
@@ -216,6 +231,25 @@ export function CodeEditor() {
             </Button>
             <Button variant="destructive" onClick={confirmClose}>
               Discard changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Saved-changes diff */}
+      <Dialog open={!!savedDiff} onOpenChange={(open) => !open && setSavedDiff(null)}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Saved changes</DialogTitle>
+            <DialogDescription className="font-mono text-xs truncate">
+              {savedDiff?.path}
+            </DialogDescription>
+          </DialogHeader>
+          {savedDiff && (
+            <FileDiff oldContent={savedDiff.oldContent} newContent={savedDiff.newContent} />
+          )}
+          <DialogFooter>
+            <Button size="sm" onClick={() => setSavedDiff(null)}>
+              Done
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -14,53 +14,60 @@ interface FileDiffProps {
 function diffLines(oldStr: string, newStr: string): Array<{ type: "same" | "add" | "remove"; text: string; oldNum?: number; newNum?: number }> {
   const oldLines = oldStr.split("\n");
   const newLines = newStr.split("\n");
-
-  // Simple LCS-based diff
   const m = oldLines.length;
   const n = newLines.length;
 
-  // Build LCS table (cap at reasonable size to prevent OOM)
-  const maxSize = 5000;
-  if (m * n > maxSize * maxSize) {
-    // Fallback: treat all old as removed, all new as added
-    const result: Array<{ type: "same" | "add" | "remove"; text: string; oldNum?: number; newNum?: number }> = [];
-    oldLines.forEach((line, i) => result.push({ type: "remove", text: line, oldNum: i + 1 }));
-    newLines.forEach((line, i) => result.push({ type: "add", text: line, newNum: i + 1 }));
-    return result;
-  }
+  // Trim common prefix/suffix so the LCS only runs on the changed region.
+  let prefix = 0;
+  const minLen = Math.min(m, n);
+  while (prefix < minLen && oldLines[prefix] === newLines[prefix]) prefix++;
+  let suffix = 0;
+  while (suffix < m - prefix && suffix < n - prefix && oldLines[m - 1 - suffix] === newLines[n - 1 - suffix]) suffix++;
 
-  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-  for (let i = m - 1; i >= 0; i--) {
-    for (let j = n - 1; j >= 0; j--) {
-      if (oldLines[i] === newLines[j]) {
-        dp[i][j] = dp[i + 1][j + 1] + 1;
-      } else {
-        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
-      }
-    }
-  }
+  const oldMid = oldLines.slice(prefix, m - suffix);
+  const newMid = newLines.slice(prefix, n - suffix);
+  const om = oldMid.length;
+  const on = newMid.length;
 
   const result: Array<{ type: "same" | "add" | "remove"; text: string; oldNum?: number; newNum?: number }> = [];
-  let i = 0, j = 0, oldNum = 1, newNum = 1;
-  while (i < m && j < n) {
-    if (oldLines[i] === newLines[j]) {
-      result.push({ type: "same", text: oldLines[i], oldNum, newNum });
-      i++; j++; oldNum++; newNum++;
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      result.push({ type: "remove", text: oldLines[i], oldNum });
-      i++; oldNum++;
-    } else {
-      result.push({ type: "add", text: newLines[j], newNum });
-      j++; newNum++;
+  for (let k = 0; k < prefix; k++) {
+    result.push({ type: "same", text: oldLines[k], oldNum: k + 1, newNum: k + 1 });
+  }
+
+  // Cap the DP to avoid OOM on huge changed regions.
+  const maxSize = 2000;
+  if (om * on > maxSize * maxSize) {
+    oldMid.forEach((line, i) => result.push({ type: "remove", text: line, oldNum: prefix + i + 1 }));
+    newMid.forEach((line, i) => result.push({ type: "add", text: line, newNum: prefix + i + 1 }));
+  } else {
+    const dp: number[][] = Array.from({ length: om + 1 }, () => new Array(on + 1).fill(0));
+    for (let i = om - 1; i >= 0; i--) {
+      for (let j = on - 1; j >= 0; j--) {
+        if (oldMid[i] === newMid[j]) dp[i][j] = dp[i + 1][j + 1] + 1;
+        else dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
     }
+    let i = 0, j = 0, oldNum = prefix + 1, newNum = prefix + 1;
+    while (i < om && j < on) {
+      if (oldMid[i] === newMid[j]) {
+        result.push({ type: "same", text: oldMid[i], oldNum, newNum });
+        i++; j++; oldNum++; newNum++;
+      } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+        result.push({ type: "remove", text: oldMid[i], oldNum });
+        i++; oldNum++;
+      } else {
+        result.push({ type: "add", text: newMid[j], newNum });
+        j++; newNum++;
+      }
+    }
+    while (i < om) { result.push({ type: "remove", text: oldMid[i], oldNum }); i++; oldNum++; }
+    while (j < on) { result.push({ type: "add", text: newMid[j], newNum }); j++; newNum++; }
   }
-  while (i < m) {
-    result.push({ type: "remove", text: oldLines[i], oldNum });
-    i++; oldNum++;
-  }
-  while (j < n) {
-    result.push({ type: "add", text: newLines[j], newNum });
-    j++; newNum++;
+
+  for (let k = 0; k < suffix; k++) {
+    const oi = m - suffix + k;
+    const ni = n - suffix + k;
+    result.push({ type: "same", text: oldLines[oi], oldNum: oi + 1, newNum: ni + 1 });
   }
   return result;
 }

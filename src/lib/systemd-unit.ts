@@ -187,48 +187,64 @@ export interface UnitTemplateInput {
   restart?: string;
   restartSec?: number;
   syslogIdentifier: string;
+  /** Optional OnFailure= unit, e.g. slack-notify@%n.service */
+  onFailure?: string;
+  /** Optional MemoryMax=, e.g. 3G */
+  memoryMax?: string;
+  /** Optional CPUQuota=, e.g. 90% */
+  cpuQuota?: string;
 }
 
-/** Build a voice-agent-style unit file matching gia-voice-inbound deploy shape. */
+/** Build a voice-agent-style unit file matching the deployed inbound-agent units. */
 export function buildUnitFile(input: UnitTemplateInput): string {
-  const user = input.user || "root";
-  const group = input.group || user;
-  const restart = input.restart || "always";
+  const oneLine = (v: string) => v.replace(/[\r\n]+/g, " ").trim();
+  const user = oneLine(input.user || "root") || "root";
+  const group = oneLine(input.group || user) || user;
+  const restart = oneLine(input.restart || "always");
   const restartSec = input.restartSec ?? 10;
 
   const envLines: string[] = [];
   if (input.agentConfigPath) {
-    envLines.push(`Environment=AGENT_CONFIG_PATH=${input.agentConfigPath}`);
+    envLines.push(`Environment=AGENT_CONFIG_PATH=${oneLine(input.agentConfigPath)}`);
   }
   if (input.extraEnv) {
     for (const [k, v] of Object.entries(input.extraEnv)) {
-      if (k && v) envLines.push(`Environment=${k}=${v}`);
+      if (k && v) envLines.push(`Environment=${oneLine(k)}=${oneLine(v)}`);
     }
   }
-  if (input.environmentFile) {
-    envLines.push(`EnvironmentFile=${input.environmentFile}`);
-  }
 
-  return [
+  const unitLines = [
     "[Unit]",
-    `Description=${input.description}`,
+    `Description=${oneLine(input.description)}`,
     "After=network-online.target",
     "Wants=network-online.target",
     "StartLimitIntervalSec=300",
     "StartLimitBurst=5",
-    "",
+  ];
+  if (input.onFailure) unitLines.push(`OnFailure=${oneLine(input.onFailure)}`);
+
+  const serviceLines = [
     "[Service]",
     "Type=simple",
     `User=${user}`,
     `Group=${group}`,
-    `WorkingDirectory=${input.workingDirectory}`,
+    `WorkingDirectory=${oneLine(input.workingDirectory)}`,
     ...envLines,
-    `ExecStart=${input.execStart}`,
+    `ExecStart=${oneLine(input.execStart)}`,
     `Restart=${restart}`,
     `RestartSec=${restartSec}`,
     "StandardOutput=journal",
     "StandardError=journal",
-    `SyslogIdentifier=${input.syslogIdentifier}`,
+    `SyslogIdentifier=${oneLine(input.syslogIdentifier)}`,
+  ];
+  if (input.environmentFile) serviceLines.push(`EnvironmentFile=${oneLine(input.environmentFile)}`);
+  if (input.memoryMax) serviceLines.push(`MemoryMax=${oneLine(input.memoryMax)}`);
+  if (input.cpuQuota) serviceLines.push(`CPUQuota=${oneLine(input.cpuQuota)}`);
+
+  return [
+    ...unitLines,
+    "",
+    ...serviceLines,
     "",
     "[Install]",
     "WantedBy=multi-user.target",
@@ -237,6 +253,9 @@ export function buildUnitFile(input: UnitTemplateInput): string {
 }
 
 export const DEFAULT_VOICE_AGENT_WD = "/opt/agents/gia-voice-inbound";
+export const DEFAULT_ON_FAILURE = "slack-notify@%n.service";
+export const DEFAULT_MEMORY_MAX = "3G";
+export const DEFAULT_CPU_QUOTA = "90%";
 
 export function defaultExecStart(workingDirectory: string): string {
   const wd = workingDirectory.replace(/\/$/, "") || DEFAULT_VOICE_AGENT_WD;

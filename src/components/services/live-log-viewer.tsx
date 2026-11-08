@@ -114,10 +114,6 @@ export function LiveLogViewer({ connectionId, serviceName }: LiveLogViewerProps)
   const [lineCount, setLineCount] = useState(0);
   const [filterQuery, setFilterQuery] = useState("");
   const [historyLines, setHistoryLines] = useState(0);
-  const historyLinesRef = useRef(historyLines);
-  useEffect(() => {
-    historyLinesRef.current = historyLines;
-  }, [historyLines]);
   const [restartKey, setRestartKey] = useState(0);
   // Only re-subscribe on reconnect when the tab is visible (hidden tabs stay suspended)
   useEffect(() => {
@@ -129,10 +125,11 @@ export function LiveLogViewer({ connectionId, serviceName }: LiveLogViewerProps)
     return () => { unsub(); };
   }, []);
 
+  const activeStreamRef = useRef<{ stop: () => void; ready: Promise<void> } | null>(null);
+  const isMountedRef = useRef(true);
   const containerRef = useRef<HTMLDivElement>(null);
   const pendingChunksRef = useRef<string>("");
   const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopRef = useRef<(() => void) | null>(null);
   const autoScrollRef = useRef(autoScroll);
   const isAtBottomRef = useRef(true);
   const statusRef = useRef(status);
@@ -175,10 +172,57 @@ export function LiveLogViewer({ connectionId, serviceName }: LiveLogViewerProps)
     };
   }, [flush]);
 
-  useEffect(() => {
-    let isMounted = true;
-    let currentStop: (() => void) | null = null;
+  const stopStream = useCallback(() => {
+    if (activeStreamRef.current) {
+      try {
+        activeStreamRef.current.stop();
+      } catch {
+        // noop
+      }
+      activeStreamRef.current = null;
+    }
+  }, []);
 
+  const startStream = useCallback(
+    (opts?: { historyLines?: number }) => {
+      stopStream();
+      if (!isMountedRef.current) return;
+
+      setStatus("connecting");
+      setErrorMsg(null);
+
+      const handle = servicesApi.streamLogs(
+        connectionId,
+        serviceName,
+        {
+          onChunk: (chunk) => {
+            if (!isMountedRef.current) return;
+            pendingChunksRef.current += chunk;
+          },
+          onError: (err) => {
+            if (!isMountedRef.current) return;
+            setErrorMsg(err);
+            setStatus("error");
+          },
+          onClose: () => {
+            if (!isMountedRef.current) return;
+            flush();
+            setStatus("closed");
+          },
+        },
+        { historyLines: opts?.historyLines },
+      );
+
+      activeStreamRef.current = handle;
+      handle.ready.then(() => {
+        if (isMountedRef.current) setStatus("streaming");
+      });
+    },
+    [connectionId, serviceName, stopStream, flush],
+  );
+
+  useEffect(() => {
+    isMountedRef.current = true;
     setLines([]);
     setLineCount(0);
     pendingChunksRef.current = "";
@@ -186,76 +230,37 @@ export function LiveLogViewer({ connectionId, serviceName }: LiveLogViewerProps)
     userPausedRef.current = false;
     visibilitySuspendedRef.current = false;
 
-    const attach = (opts?: { historyLines?: number }) => {
-      const handle = servicesApi.streamLogs(
-        connectionId,
-        serviceName,
-        {
-          onChunk: (chunk) => {
-            if (!isMounted) return;
-            pendingChunksRef.current += chunk;
-          },
-          onError: (err) => {
-            if (!isMounted) return;
-            setErrorMsg(err);
-            setStatus("error");
-          },
-          onClose: () => {
-            if (!isMounted) return;
-            flush();
-            setStatus("closed");
-          },
-        },
-        { historyLines: opts?.historyLines },
-      );
-      currentStop = handle.stop;
-      stopRef.current = handle.stop;
-      handle.ready.then(() => {
-        if (isMounted) setStatus("streaming");
-      });
-    };
-
-    const detach = () => {
-      currentStop?.();
-      currentStop = null;
-      stopRef.current = null;
-    };
-
     if (document.visibilityState === "visible") {
-      setStatus("connecting");
-      attach({ historyLines: historyLines || undefined });
+      startStream({ historyLines: historyLines || undefined });
     } else {
       visibilitySuspendedRef.current = true;
       setStatus("paused");
     }
 
     const onVisibility = () => {
-      if (!isMounted) return;
+      if (!isMountedRef.current) return;
       if (document.visibilityState === "hidden") {
         if (statusRef.current === "streaming" || statusRef.current === "connecting") {
           visibilitySuspendedRef.current = true;
           flush();
-          detach();
+          stopStream();
           setStatus("paused");
         }
       } else if (visibilitySuspendedRef.current && !userPausedRef.current) {
         // Resume without re-dumping history — keep buffer intact
         visibilitySuspendedRef.current = false;
-        setStatus("connecting");
-        setErrorMsg(null);
-        attach({ historyLines: 0 });
+        startStream({ historyLines: 0 });
       }
     };
     document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
-      isMounted = false;
+      isMountedRef.current = false;
       flush();
-      detach();
+      stopStream();
       document.removeEventListener("visibilitychange", onVisibility);
-      stopRef.current = null;
     };
-  }, [connectionId, serviceName, flush, historyLines, restartKey]);
+  }, [connectionId, serviceName, flush, historyLines, restartKey, startStream, stopStream]);
 
   useEffect(() => {
     if (autoScrollRef.current && isAtBottomRef.current && containerRef.current) {
@@ -270,32 +275,20 @@ export function LiveLogViewer({ connectionId, serviceName }: LiveLogViewerProps)
   }, []);
 
   const togglePause = useCallback(() => {
-    if (status === "streaming") {
+    if (status === "streaming" || status === "connecting") {
       userPausedRef.current = true;
       visibilitySuspendedRef.current = false;
-      stopRef.current?.();
+      stopStream();
       flush();
       setStatus("paused");
-    } else if (status === "paused" || status === "closed") {
+    } else if (status === "paused" || status === "closed" || status === "error") {
       userPausedRef.current = false;
       visibilitySuspendedRef.current = false;
       pendingChunksRef.current = "";
-      setStatus("connecting");
-      setErrorMsg(null);
-      const handle = servicesApi.streamLogs(
-        connectionId,
-        serviceName,
-        {
-          onChunk: (chunk) => { pendingChunksRef.current += chunk; },
-          onError: (err) => { setErrorMsg(err); setStatus("error"); },
-          onClose: () => { flush(); setStatus("closed"); },
-        },
-        { historyLines: historyLinesRef.current || undefined },
-      );
-      stopRef.current = handle.stop;
-      handle.ready.then(() => setStatus("streaming"));
+      // Resume without re-dumping history — tail only!
+      startStream({ historyLines: 0 });
     }
-  }, [status, connectionId, serviceName, flush]);
+  }, [status, stopStream, flush, startStream]);
 
   const clear = useCallback(() => {
     setLines([]);

@@ -173,6 +173,16 @@ export function FileGrid({ connectionId, entries, viewMode, selectedItems, onRef
   const gridColumns = Math.max(1, Math.floor((containerWidth - GRID_PADDING * 2 + GRID_GAP) / (GRID_ITEM_MIN_WIDTH + GRID_GAP)));
   const gridRowCount = Math.ceil(entries.length / gridColumns);
 
+  // Fixed side columns must never eat the whole pane, or the name column collapses to 0
+  // and filenames disappear (they truncate, while the icon just overflows).
+  const isNarrow = containerWidth > 0 && containerWidth < 540;
+  const isTiny = containerWidth > 0 && containerWidth < 340;
+  const listColumns = isTiny
+    ? "minmax(0,1fr)"
+    : isNarrow
+      ? "minmax(0,1fr) 150px"
+      : "minmax(0,1fr) 100px 180px 100px";
+
   const measureRef = useCallback((node: HTMLDivElement | null) => {
     if (!node) return;
     // Assign to parentRef for virtualizer
@@ -184,7 +194,7 @@ export function FileGrid({ connectionId, entries, viewMode, selectedItems, onRef
     });
     ro.observe(node);
     setContainerWidth(node.getBoundingClientRect().width);
-    // cleanup not strictly needed since component unmounts, but ResizeObserver is lightweight
+    return () => ro.disconnect();
   }, []);
 
   const listVirtualizer = useVirtualizer({
@@ -477,31 +487,37 @@ export function FileGrid({ connectionId, entries, viewMode, selectedItems, onRef
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div className="flex flex-col h-full" tabIndex={0} onKeyDown={handleKeyDown}>
-            <div className="grid grid-cols-[1fr_100px_180px_100px] gap-2 px-3 py-1 text-xs font-medium text-muted-foreground border-b border-border shrink-0">
+            <div className="grid gap-2 px-3 py-1 text-xs font-medium text-muted-foreground border-b border-border shrink-0" style={{ gridTemplateColumns: listColumns }}>
               <button className="flex items-center gap-1 text-left hover:text-foreground transition-colors duration-150" onClick={() => setSort(connectionId, "name")}>
                 Name
                 {explorer.sortBy === "name" && (
                   <span className="animate-rotate-in">{explorer.sortDir === "asc" ? <ArrowUpAZ className="h-3 w-3" /> : <ArrowDownAZ className="h-3 w-3" />}</span>
                 )}
               </button>
-              <button className="flex items-center justify-end gap-1 hover:text-foreground transition-colors duration-150" onClick={() => setSort(connectionId, "size")}>
-                {explorer.sortBy === "size" && (
-                  <span className="animate-rotate-in">{explorer.sortDir === "asc" ? <ArrowUpAZ className="h-3 w-3" /> : <ArrowDownAZ className="h-3 w-3" />}</span>
-                )}
-                Size
-              </button>
-              <button className="flex items-center gap-1 hover:text-foreground transition-colors duration-150" onClick={() => setSort(connectionId, "modified")}>
-                Modified
-                {explorer.sortBy === "modified" && (
-                  <span className="animate-rotate-in">{explorer.sortDir === "asc" ? <ArrowUpAZ className="h-3 w-3" /> : <ArrowDownAZ className="h-3 w-3" />}</span>
-                )}
-              </button>
-              <button className="flex items-center gap-1 hover:text-foreground transition-colors duration-150" onClick={() => setSort(connectionId, "type")}>
-                Type
-                {explorer.sortBy === "type" && (
-                  <span className="animate-rotate-in">{explorer.sortDir === "asc" ? <ArrowUpAZ className="h-3 w-3" /> : <ArrowDownAZ className="h-3 w-3" />}</span>
-                )}
-              </button>
+              {!isNarrow && (
+                <button className="flex items-center justify-end gap-1 hover:text-foreground transition-colors duration-150" onClick={() => setSort(connectionId, "size")}>
+                  {explorer.sortBy === "size" && (
+                    <span className="animate-rotate-in">{explorer.sortDir === "asc" ? <ArrowUpAZ className="h-3 w-3" /> : <ArrowDownAZ className="h-3 w-3" />}</span>
+                  )}
+                  Size
+                </button>
+              )}
+              {!isTiny && (
+                <button className="flex items-center gap-1 hover:text-foreground transition-colors duration-150" onClick={() => setSort(connectionId, "modified")}>
+                  Modified
+                  {explorer.sortBy === "modified" && (
+                    <span className="animate-rotate-in">{explorer.sortDir === "asc" ? <ArrowUpAZ className="h-3 w-3" /> : <ArrowDownAZ className="h-3 w-3" />}</span>
+                  )}
+                </button>
+              )}
+              {!isNarrow && (
+                <button className="flex items-center gap-1 hover:text-foreground transition-colors duration-150" onClick={() => setSort(connectionId, "type")}>
+                  Type
+                  {explorer.sortBy === "type" && (
+                    <span className="animate-rotate-in">{explorer.sortDir === "asc" ? <ArrowUpAZ className="h-3 w-3" /> : <ArrowDownAZ className="h-3 w-3" />}</span>
+                  )}
+                </button>
+              )}
             </div>
             <div ref={viewMode === "list" ? measureRef : undefined} className="flex-1 overflow-auto">
               <div className="relative" style={{ height: listVirtualizer.getTotalSize() }}>
@@ -517,13 +533,14 @@ export function FileGrid({ connectionId, entries, viewMode, selectedItems, onRef
                       <ContextMenuTrigger asChild>
                         <div
                           className={cn(
-                            "absolute left-0 right-0 grid grid-cols-[1fr_100px_180px_100px] gap-2 items-center px-3 cursor-pointer transition-all duration-150 text-sm animate-stagger",
+                            "absolute left-0 right-0 grid gap-2 items-center px-3 cursor-pointer transition-all duration-150 text-sm animate-stagger",
                             isSelected ? "bg-accent" : "hover:bg-accent/50 hover:shadow-sm",
                             isFocused && !isSelected && "ring-1 ring-inset ring-primary/30"
                           )}
                           style={{
                             top: virtualRow.start,
                             height: virtualRow.size,
+                            gridTemplateColumns: listColumns,
                             animationDelay: `${virtualRow.index * 15}ms`,
                           }}
                           onClick={(e) => handleClick(entry, e, virtualRow.index)}
@@ -548,11 +565,13 @@ export function FileGrid({ connectionId, entries, viewMode, selectedItems, onRef
                               <span className="truncate">{entry.name}</span>
                             )}
                           </div>
-                          <span className="text-right text-muted-foreground">
-                            {entry.type === "directory" ? "—" : formatSize(entry.size)}
-                          </span>
-                          <span className="text-muted-foreground text-xs">{formatDate(entry.modified)}</span>
-                          <span className="text-muted-foreground font-mono text-xs">{entry.permissions}</span>
+                          {!isNarrow && (
+                            <span className="text-right text-muted-foreground">
+                              {entry.type === "directory" ? "—" : formatSize(entry.size)}
+                            </span>
+                          )}
+                          {!isTiny && <span className="text-muted-foreground text-xs">{formatDate(entry.modified)}</span>}
+                          {!isNarrow && <span className="text-muted-foreground font-mono text-xs">{entry.permissions}</span>}
                         </div>
                       </ContextMenuTrigger>
                       <FileContextMenu

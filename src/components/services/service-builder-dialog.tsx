@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { FilePlus2, Loader2 } from "lucide-react";
+import { FilePlus2, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -29,6 +29,9 @@ import { useConnectionStore } from "@/stores/connection-store";
 import { useUIStore } from "@/stores/ui-store";
 import { ensureConnection } from "@/lib/ensure-connection";
 import {
+  DEFAULT_CPU_QUOTA,
+  DEFAULT_MEMORY_MAX,
+  DEFAULT_ON_FAILURE,
   DEFAULT_VOICE_AGENT_WD,
   buildUnitFile,
   defaultExecStart,
@@ -64,6 +67,9 @@ export function ServiceBuilderDialog() {
   const [workingDirectory, setWorkingDirectory] = useState(DEFAULT_VOICE_AGENT_WD);
   const [user, setUser] = useState("root");
   const [restart, setRestart] = useState("always");
+  const [memoryMax, setMemoryMax] = useState(DEFAULT_MEMORY_MAX);
+  const [cpuQuota, setCpuQuota] = useState(DEFAULT_CPU_QUOTA);
+  const [slackAlert, setSlackAlert] = useState(true);
   const [execStart, setExecStart] = useState(defaultExecStart(DEFAULT_VOICE_AGENT_WD));
   const [execTouched, setExecTouched] = useState(false);
   const [agentConfigPath, setAgentConfigPath] = useState("");
@@ -78,22 +84,27 @@ export function ServiceBuilderDialog() {
   const [discovering, setDiscovering] = useState(false);
   const [syslogTouched, setSyslogTouched] = useState(false);
   const [descTouched, setDescTouched] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Seed defaults when dialog opens
   useEffect(() => {
     if (!open) return;
-    setConnectionId(activeTabId || connections[0]?.id || "");
+    setConnectionId(activeTabId || "");
     setServiceName("");
     setDescription("");
     setSyslogIdentifier("");
     setWorkingDirectory(DEFAULT_VOICE_AGENT_WD);
     setUser("root");
     setRestart("always");
+    setMemoryMax(DEFAULT_MEMORY_MAX);
+    setCpuQuota(DEFAULT_CPU_QUOTA);
+    setSlackAlert(true);
     setExecStart(defaultExecStart(DEFAULT_VOICE_AGENT_WD));
     setExecTouched(false);
     setSyslogTouched(false);
     setDescTouched(false);
-    setAgentConfigPath(`${DEFAULT_VOICE_AGENT_WD}/configs/agent-config.json`);
+    // Leave empty: orchestrator.py already defaults to configs/agent-config-<env>.json.
+    setAgentConfigPath("");
     setEnvironmentFile("");
     setClientProfile("");
     setDoDaemonReload(true);
@@ -101,6 +112,12 @@ export function ServiceBuilderDialog() {
     setDoStart(false);
     setConfigOptions([]);
     setProfileOptions([]);
+  }, [open, activeTabId]);
+
+  // Auto-select connection when connections load
+  useEffect(() => {
+    if (!open || !connections.length) return;
+    setConnectionId((prev) => prev || activeTabId || connections[0]?.id || "");
   }, [open, activeTabId, connections]);
 
   const effectiveName = sanitizeServiceName(serviceName);
@@ -164,6 +181,9 @@ export function ServiceBuilderDialog() {
       execStart,
       restart,
       syslogIdentifier: syslogIdentifier || effectiveName || "agent",
+      onFailure: slackAlert ? DEFAULT_ON_FAILURE : undefined,
+      memoryMax: memoryMax || undefined,
+      cpuQuota: cpuQuota || undefined,
     });
   }, [
     description,
@@ -176,6 +196,9 @@ export function ServiceBuilderDialog() {
     execStart,
     restart,
     syslogIdentifier,
+    slackAlert,
+    memoryMax,
+    cpuQuota,
   ]);
 
   const handleSubmit = async () => {
@@ -242,6 +265,24 @@ export function ServiceBuilderDialog() {
       toast.error((err as Error).message);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!connectionId || !effectiveName) return;
+    const ok = window.confirm(`Delete service "${effectiveName}"? This will stop, disable, and remove the unit file.`);
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await ensureConnection(connectionId, connections);
+      await servicesApi.delete(connectionId, effectiveName);
+      toast.success(`Deleted ${effectiveName}`);
+      await queryClient.invalidateQueries({ queryKey: ["services", connectionId] });
+      close();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -358,7 +399,7 @@ export function ServiceBuilderDialog() {
               ) : null}
               <Input
                 className="h-8 text-xs font-mono"
-                placeholder="/opt/agents/.../configs/agent-config.json"
+                placeholder="Optional — defaults to configs/agent-config-<env>.json"
                 value={agentConfigPath}
                 onChange={(e) => setAgentConfigPath(e.target.value)}
               />
@@ -414,7 +455,7 @@ export function ServiceBuilderDialog() {
             />
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-4 gap-3">
             <div className="grid gap-1.5">
               <Label className="text-xs">User</Label>
               <Input className="h-8 text-xs" value={user} onChange={(e) => setUser(e.target.value)} />
@@ -434,9 +475,23 @@ export function ServiceBuilderDialog() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-1.5 col-span-1">
-              <Label className="text-xs opacity-0">pad</Label>
-              <p className="text-[10px] text-muted-foreground leading-tight pt-1">Group defaults to User</p>
+            <div className="grid gap-1.5">
+              <Label className="text-xs">MemoryMax</Label>
+              <Input
+                className="h-8 text-xs font-mono"
+                placeholder="3G"
+                value={memoryMax}
+                onChange={(e) => setMemoryMax(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label className="text-xs">CPUQuota</Label>
+              <Input
+                className="h-8 text-xs font-mono"
+                placeholder="90%"
+                value={cpuQuota}
+                onChange={(e) => setCpuQuota(e.target.value)}
+              />
             </div>
           </div>
 
@@ -474,22 +529,41 @@ export function ServiceBuilderDialog() {
               <Switch checked={doStart} onCheckedChange={setDoStart} />
               start
             </label>
+            <label className="flex items-center gap-2 text-xs cursor-pointer" title={`OnFailure=${DEFAULT_ON_FAILURE}`}>
+              <Switch checked={slackAlert} onCheckedChange={setSlackAlert} />
+              Slack alert on failure
+            </label>
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={close} disabled={submitting}>
-            Cancel
-          </Button>
-          <Button
-            size="sm"
-            onClick={handleSubmit}
-            disabled={submitting || !effectiveName}
-            className={cn(submitting && "opacity-80")}
-          >
-            {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <FilePlus2 className="h-3.5 w-3.5 mr-1.5" />}
-            Write unit
-          </Button>
+        <DialogFooter className="flex-row !justify-between">
+          <div>
+            {effectiveName && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleDelete}
+                disabled={submitting || deleting}
+              >
+                {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Trash2 className="h-3.5 w-3.5 mr-1.5" />}
+                Delete
+              </Button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={close} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSubmit}
+              disabled={submitting || !effectiveName}
+              className={cn(submitting && "opacity-80")}
+            >
+              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <FilePlus2 className="h-3.5 w-3.5 mr-1.5" />}
+              Write unit
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

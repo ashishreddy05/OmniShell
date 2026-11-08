@@ -101,7 +101,7 @@ A complete code editing experience powered by the same engine that runs VS Code.
 * **Multi-Tab File Editing**: Click on any text file to open it in a tab. Open multiple files side-by-side. The editor keeps track of current edits, active tabs, and cursors.
 * **Drag-to-Resize Split**: Drag the `GripVertical` handle between the Explorer and Editor panels to resize them. The ratio persists across sessions via localStorage. Drag the editor below 8% to collapse it; click the collapsed handle to restore.
 * **Monaco Features**: Syntax highlighting (auto-detected by file extension), auto-completions, search & replace, folding, and multi-cursor editing.
-* **Remote Save**: Press `Cmd+S` (or `Ctrl+S` on Windows/Linux) to save changes. Your changes are sent via an SFTP stream to overwrite the file on the remote server instantly.
+* **Remote Save**: Press `Cmd+S` (or `Ctrl+S` on Windows/Linux) to save changes. Your changes are sent via an SFTP stream to overwrite the file on the remote server instantly. The save toast shows **View diff** — a line-by-line before/after comparison of what was just written.
 * **File Previews**: High-performance previews are supported directly for:
   * Images (rendered inline).
   * PDF files.
@@ -172,6 +172,8 @@ Manage and monitor remote systemd services directly from the dashboard. Click th
   * Displays a real-time `journalctl -f` tail of the service logs with auto-scroll.
   * **Filter input**: Type to filter visible lines locally on-the-fly — narrows down the stream without restarting it.
   * **Timeline Context Search** (by `call_id`): Paste a `call_id` (or other unique token) into the search input. The backend **greps the journal for that call_id first**, then takes Start/End webhook timestamps from those hits and fetches the full window with `--since` / `--until` (plus optional padding). This captures multi-line payloads. **Do not rely on Start/End alone** — grepping Start/End without the call_id returns the latest call on the host, not yours.
+  * **Readable highlighting**: `[Conversation]` lines get a violet tint with the `assistant:` / `user:` tag and spoken text colored (violet / sky, theme-aware in light and dark); `[Tool]` lines get an amber tint. Errors and warnings keep their red / yellow treatment. The same highlighting applies to Live Logs. Every log line is still shown exactly as `journalctl` returned it — highlighting never removes or rewrites a line.
+  * **Session ID (room_id)**: The call's `room_id` is extracted from the log window and shown as a copyable **Session** badge beside the timestamps. This is the voice agent's `session_id`.
   * **Extend Window**: Click the **Timer** button beside the filter input to expand or shrink the search window. Choose **Before start** / **After end** direction, presets (5/10/30/60 seconds), or type a custom value (use negative numbers to subtract). Pads are clamped to 0.
   * **Live Log History**: Click the **History** button to switch between line-count presets (Default/500/1000/2000/5000 + custom). Changing the depth restarts the `journalctl -f -n N` stream immediately.
   * **AI "Analyze" button**: Sends the last 150 log lines to Gemini and renders the diagnosis in a collapsible markdown panel with syntax-highlighted code blocks and one-click copy.
@@ -191,10 +193,15 @@ Create a voice-agent systemd unit without hand-writing the file. Writes to `/etc
 * **Service name** — without `.service` suffix (written as `name.service`)
 * **SyslogIdentifier**, **Description**
 * **WorkingDirectory** — plus **Discover profiles** to scan the remote tree for configs/profiles
-* **AGENT_CONFIG_PATH** / **CLIENT_PROFILE** (optional) / **EnvironmentFile**
+* **AGENT_CONFIG_PATH** — optional; leave blank to use the orchestrator's `configs/agent-config-<env>.json` default. Paths are never invented.
+* **CLIENT_PROFILE** (optional) / **EnvironmentFile**
 * **User** (defaults to `root`), **Restart**, **ExecStart**
+* **MemoryMax** / **CPUQuota** — defaults `3G` / `90%`; clear a field to omit it
+* **Slack alert on failure** — adds `OnFailure=slack-notify@%n.service`
 * **Preview** — live unit text before write
 * Toggles: **daemon-reload after write**, **enable**, **start**
+
+The generated unit matches the deployed inbound-agent shape (`gia-voice-inbound` on `/opt/agents/gia-voice-inbound`, `orchestrator.py dev`, `EnvironmentFile` for the client profile, resource limits, optional Slack failure hook).
 
 Click **Write unit**. If the file already exists you get an overwrite confirm. After write, optional enable/start runs through the same service APIs as the Service Manager.
 
